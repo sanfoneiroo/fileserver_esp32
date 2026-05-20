@@ -1,20 +1,118 @@
 #include <WiFi.h>
 #include <WebServer.h>
+
 #include <LittleFS.h>
 #include <FS.h>
 
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
 #include "wifi_config.h"
+#include "config.h"
+
+// ======================================================
+// SERVER
+// ======================================================
 
 WebServer server(80);
 
-// ================= UTILS =================
+// ======================================================
+// OLED
+// ======================================================
+
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  &Wire,
+  -1
+);
+
+// ======================================================
+// OLED STATUS
+// ======================================================
+
+String statusLine1 = "";
+String statusLine2 = "";
+
+String logLine1 = "";
+String logLine2 = "";
+
+// ======================================================
+// OLED RENDER
+// ======================================================
+
+void renderOLED()
+{
+  display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  // ------------------------------
+  // STATUS FIXO
+  // ------------------------------
+
+  display.setCursor(0, 0);
+  display.println(statusLine1);
+
+  display.setCursor(0, 16);
+  display.println(statusLine2);
+
+  // ------------------------------
+  // LOG DINAMICO
+  // ------------------------------
+
+  display.setCursor(0, 32);
+  display.println(logLine1);
+
+  display.setCursor(0, 48);
+  display.println(logLine2);
+
+  display.display();
+}
+
+// ======================================================
+// STATUS
+// ======================================================
+
+void setStatus(
+  String line1,
+  String line2
+)
+{
+  statusLine1 = line1;
+  statusLine2 = line2;
+
+  renderOLED();
+}
+
+// ======================================================
+// LOG
+// ======================================================
+
+void oledLog(String msg)
+{
+  Serial.println(msg);
+
+  logLine1 = logLine2;
+  logLine2 = msg;
+
+  renderOLED();
+}
+
+// ======================================================
+// UTILS
+// ======================================================
 
 String formatBytes(size_t bytes)
 {
   if (bytes < 1024)
     return String(bytes) + " B";
+
   else if (bytes < (1024 * 1024))
     return String(bytes / 1024.0) + " KB";
+
   else if (bytes < (1024 * 1024 * 1024))
     return String(bytes / 1024.0 / 1024.0) + " MB";
 
@@ -36,68 +134,35 @@ String getContentType(String filename)
   return "application/octet-stream";
 }
 
-// ================= ROOT ====================
+// ======================================================
+// ROOT
+// ======================================================
 
 void handleRoot()
 {
-  if (LittleFS.exists("/index.html"))
-  {
-    File file = LittleFS.open("/index.html", "r");
-
-    server.streamFile(file, "text/html");
-
-    file.close();
-
-    return;
-  }
-
-  String html;
-
-  html += "<html><head>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<title>ESP32 File Server</title>";
-  html += "</head><body>";
-
-  html += "<h1>ESP32 File Server (LittleFS)</h1>";
-
-  html += "<h3>System Info</h3>";
-
-  html += "Chip: " + String(ESP.getChipModel()) + "<br>";
-  html += "CPU: " + String(ESP.getCpuFreqMHz()) + " MHz<br>";
-  html += "Flash: " + formatBytes(ESP.getFlashChipSize()) + "<br>";
-  html += "Heap Free: " + formatBytes(ESP.getFreeHeap()) + "<br>";
-
-  html += "LittleFS Used: " +
-          formatBytes(LittleFS.usedBytes()) +
-          " / " +
-          formatBytes(LittleFS.totalBytes()) +
-          "<br><br>";
-
-  html += "WiFi SSID: " + WiFiConfig::getSSID() + "<br>";
-  html += "IP: " + WiFiConfig::localIP().toString() + "<br><br>";
-
-  html += "<a href='/files'>File Manager</a>";
-
-  html += "</body></html>";
-
-  server.send(200, "text/html", html);
+  handleFileList();
 }
 
-// ================= FILE LIST =================
+// ======================================================
+// FILE LIST
+// ======================================================
 
 void handleFileList()
 {
   String html;
 
   html += "<html><body>";
-  html += "<h2>File Manager</h2>";
+
+  html += "<h2>ESP32 File Server</h2>";
 
   html += "<form method='POST' action='/upload' enctype='multipart/form-data'>";
   html += "<input type='file' name='upload'>";
   html += "<input type='submit' value='Upload'>";
   html += "</form>";
 
-  html += "<br><a href='/format'>FORMAT FS</a><hr>";
+  html += "<br>";
+  html += "<a href='/format'>FORMAT FS</a>";
+  html += "<hr>";
 
   File root = LittleFS.open("/");
   File file = root.openNextFile();
@@ -113,10 +178,15 @@ void handleFileList()
 
     html += "<p>";
 
-    html += path + " (" + formatBytes(size) + ") ";
+    html += path;
+    html += " (";
+    html += formatBytes(size);
+    html += ") ";
 
     html += "<a href='/download?file=" + path + "'>DOWNLOAD</a> ";
+
     html += "<a href='/rename?file=" + path + "'>RENAME</a> ";
+
     html += "<a href='/delete?file=" + path + "'>DELETE</a>";
 
     html += "</p>";
@@ -125,21 +195,49 @@ void handleFileList()
   }
 
   if (!found)
+  {
     html += "<p>No files found</p>";
+  }
 
-  html += "<br><a href='/'>Back</a>";
+  // ==================================================
+  // FOOTER
+  // ==================================================
+
+  html += "<hr>";
+
+  html += "<small>";
+
+  html += "IP: ";
+  html += WiFi.localIP().toString();
+
+  html += "<br>";
+
+  html += "LittleFS Used: ";
+  html += formatBytes(LittleFS.usedBytes());
+
+  html += " / ";
+
+  html += formatBytes(LittleFS.totalBytes());
+
+  html += "</small>";
+
   html += "</body></html>";
 
   server.send(200, "text/html", html);
 }
 
-// ================= DOWNLOAD =================
+// ======================================================
+// DOWNLOAD
+// ======================================================
 
 void handleDownload()
 {
   if (!server.hasArg("file"))
   {
     server.send(400, "text/plain", "BAD ARGS");
+
+    oledLog("DOWNLOAD FAIL");
+
     return;
   }
 
@@ -151,8 +249,14 @@ void handleDownload()
   if (!LittleFS.exists(path))
   {
     server.send(404, "text/plain", "NOT FOUND");
+
+    oledLog("FILE NOT FOUND");
+
     return;
   }
+
+  oledLog("DOWNLOAD:");
+  oledLog(path);
 
   File file = LittleFS.open(path, "r");
 
@@ -161,12 +265,17 @@ void handleDownload()
     "attachment; filename=" + path.substring(1)
   );
 
-  server.streamFile(file, getContentType(path));
+  server.streamFile(
+    file,
+    getContentType(path)
+  );
 
   file.close();
 }
 
-// ================= DELETE =================
+// ======================================================
+// DELETE
+// ======================================================
 
 void handleDelete()
 {
@@ -176,17 +285,26 @@ void handleDelete()
     path = "/" + path;
 
   if (LittleFS.exists(path))
+  {
     LittleFS.remove(path);
+
+    oledLog("DELETE:");
+    oledLog(path);
+  }
 
   server.sendHeader("Location", "/files");
 
   server.send(303);
 }
 
-// ================= FORMAT =================
+// ======================================================
+// FORMAT
+// ======================================================
 
 void handleFormat()
 {
+  oledLog("FORMAT FS");
+
   LittleFS.format();
 
   server.sendHeader("Location", "/files");
@@ -194,7 +312,9 @@ void handleFormat()
   server.send(303);
 }
 
-// ================= RENAME =================
+// ======================================================
+// RENAME
+// ======================================================
 
 void handleRename()
 {
@@ -208,9 +328,13 @@ void handleRename()
     String html;
 
     html += "<form action='/rename'>";
+
     html += "<input type='hidden' name='file' value='" + file + "'>";
+
     html += "<input name='new' placeholder='new name'>";
+
     html += "<input type='submit'>";
+
     html += "</form>";
 
     server.send(200, "text/html", html);
@@ -227,19 +351,27 @@ void handleRename()
   File newF = LittleFS.open(newName, "w");
 
   while (oldF.available())
+  {
     newF.write(oldF.read());
+  }
 
   oldF.close();
   newF.close();
 
   LittleFS.remove(file);
 
+  oledLog("RENAME:");
+  oledLog(file);
+  oledLog(newName);
+
   server.sendHeader("Location", "/files");
 
   server.send(303);
 }
 
-// ================= UPLOAD =================
+// ======================================================
+// UPLOAD
+// ======================================================
 
 File uploadFile;
 
@@ -254,40 +386,68 @@ void handleUpload()
     if (!filename.startsWith("/"))
       filename = "/" + filename;
 
-    uploadFile = LittleFS.open(filename, FILE_WRITE);
+    uploadFile = LittleFS.open(
+      filename,
+      FILE_WRITE
+    );
+
+    oledLog("UPLOAD:");
+    oledLog(filename);
   }
+
   else if (upload.status == UPLOAD_FILE_WRITE)
   {
     if (uploadFile)
-      uploadFile.write(upload.buf, upload.currentSize);
+    {
+      uploadFile.write(
+        upload.buf,
+        upload.currentSize
+      );
+    }
   }
+
   else if (upload.status == UPLOAD_FILE_END)
   {
     if (uploadFile)
+    {
       uploadFile.close();
+    }
 
-    server.sendHeader("Location", "/upload_done");
+    oledLog("UPLOAD OK");
+
+    server.sendHeader(
+      "Location",
+      "/upload_done"
+    );
 
     server.send(303);
   }
 }
 
-// ================= UPLOAD DONE =================
+// ======================================================
+// UPLOAD DONE
+// ======================================================
 
 void handleUploadDone()
 {
   String html;
 
   html += "<html><body>";
+
   html += "<h2>Upload concluido</h2>";
+
   html += "<a href='/files'>File Manager</a><br>";
+
   html += "<a href='/'>Home</a>";
+
   html += "</body></html>";
 
   server.send(200, "text/html", html);
 }
 
-// ================= NOT FOUND =================
+// ======================================================
+// NOT FOUND
+// ======================================================
 
 void handleNotFound()
 {
@@ -297,17 +457,28 @@ void handleNotFound()
   {
     File file = LittleFS.open(path, "r");
 
-    server.streamFile(file, getContentType(path));
+    server.streamFile(
+      file,
+      getContentType(path)
+    );
 
     file.close();
 
     return;
   }
 
-  server.send(404, "text/plain", "404 NOT FOUND");
+  Serial.println("404: " + path);
+
+  server.send(
+    404,
+    "text/plain",
+    "404 NOT FOUND"
+  );
 }
 
-// ================= FILE SERVER INIT =================
+// ======================================================
+// SERVER INIT
+// ======================================================
 
 void startFileServer()
 {
@@ -330,40 +501,100 @@ void startFileServer()
     handleUpload
   );
 
-  server.on("/upload_done", handleUploadDone);
+  server.on(
+    "/upload_done",
+    handleUploadDone
+  );
 
   server.onNotFound(handleNotFound);
 
   server.begin();
 
-  Serial.println("File Server iniciado");
+  setStatus(
+  WiFi.localIP().toString(),
+  "FS: " +
+  formatBytes(LittleFS.usedBytes()) +
+  "/" +
+  formatBytes(LittleFS.totalBytes())
+);
 
-  Serial.print("Acesse: http://");
-
-  Serial.println(WiFi.localIP());
+  oledLog("SERVER START");
+  oledLog("");
 }
 
-// ================= SETUP =================
+// ======================================================
+// OLED INIT
+// ======================================================
+
+void initOLED()
+{
+  Wire.begin(
+    OLED_SDA_PIN,
+    OLED_SCL_PIN
+  );
+
+  if (!display.begin(
+        SSD1306_SWITCHCAPVCC,
+        OLED_ADDRESS
+      ))
+  {
+    Serial.println("OLED FAIL");
+
+    return;
+  }
+
+  display.clearDisplay();
+
+  display.setTextSize(1);
+
+  display.setTextColor(
+    SSD1306_WHITE
+  );
+
+  display.setCursor(0, 0);
+
+  display.println("ESP32 FILE SERVER");
+
+  display.display();
+
+  delay(1000);
+
+  oledLog("OLED READY");
+}
+
+// ======================================================
+// SETUP
+// ======================================================
 
 void setup()
 {
   Serial.begin(115200);
 
+  initOLED();
+
+  oledLog("MOUNT FS");
+
   if (!LittleFS.begin(true))
   {
-    Serial.println("LittleFS mount failed");
+    oledLog("FS FAIL");
 
     return;
   }
 
-  // conecta STA ou entra em portal AP
+  oledLog("FS OK");
+
+  oledLog("WIFI START");
+
   WiFiConfig::begin();
 
-  // só chega aqui se STA conectou
+  oledLog("WIFI OK");
+
   startFileServer();
 }
 
-// ================= LOOP =================
+// ======================================================
+// LOOP
+// ======================================================
 
 void loop()
 {

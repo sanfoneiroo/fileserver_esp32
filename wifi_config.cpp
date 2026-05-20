@@ -6,6 +6,8 @@
 #include <WebServer.h>
 #include <Preferences.h>
 
+extern void oledLog(String msg);
+
 // =====================================================
 // CONFIG
 // =====================================================
@@ -182,6 +184,24 @@ static void startAP()
 
     Serial.print("AP IP: ");
     Serial.println(WiFi.softAPIP());
+
+    // =========================================
+    // OLED
+    // =========================================
+
+    oledLog("AP: ESP32_SETUP");
+
+    oledLog(
+        WiFi.softAPIP().toString()
+    );
+
+    oledLog("MODO CONFIG");
+
+    delay(1000);
+
+    oledLog("ESP32_SETUP, 12345678");
+
+    oledLog("IP: 192.168.4.1");
 }
 
 // =====================================================
