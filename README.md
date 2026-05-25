@@ -145,29 +145,13 @@ Instale utilizando o Arduino Library Manager.
 
 ## wifi_config.h
 
-Exemplo:
+O projeto utiliza um gerenciador WiFi próprio via interface web, inspirado em soluções como WiFiManager, porém implementado diretamente com:
 
-```cpp
-#pragma once
+- WiFi.h
+- WebServer.h
+- Preferences.h
 
-namespace WiFiConfig
-{
-  void begin()
-  {
-    WiFi.begin(
-      "SEU_WIFI",
-      "SUA_SENHA"
-    );
-
-    while (
-      WiFi.status() != WL_CONNECTED
-    )
-    {
-      delay(500);
-    }
-  }
-}
-```
+As credenciais são armazenadas na NVS (`Preferences`).
 
 ---
 
