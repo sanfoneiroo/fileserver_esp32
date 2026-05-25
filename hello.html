@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Hello HTML</title>
+
+<style>
+
+body{
+    margin:0;
+    padding:0;
+
+    font-family:Arial, sans-serif;
+
+    background:#0f172a;
+
+    color:white;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    height:100vh;
+}
+
+.card{
+    background:#1e293b;
+
+    padding:40px;
+
+    border-radius:16px;
+
+    text-align:center;
+
+    width:320px;
+
+    box-shadow:
+        0 0 20px rgba(0,0,0,0.4);
+}
+
+h1{
+    margin-top:0;
+
+    font-size:42px;
+
+    color:#38bdf8;
+}
+
+p{
+    color:#cbd5e1;
+
+    line-height:1.6;
+}
+
+.badge{
+    display:inline-block;
+
+    margin-top:20px;
+
+    padding:8px 14px;
+
+    border-radius:999px;
+
+    background:#22c55e;
+
+    color:white;
+
+    font-weight:bold;
+}
+
+.bar{
+    margin-top:25px;
+
+    height:10px;
+
+    border-radius:999px;
+
+    background:#334155;
+
+    overflow:hidden;
+}
+
+.fill{
+    width:75%;
+
+    height:100%;
+
+    background:linear-gradient(
+        90deg,
+        #38bdf8,
+        #22c55e
+    );
+}
+
+.footer{
+    margin-top:20px;
+
+    font-size:12px;
+
+    color:#94a3b8;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+    <h1>Hello HTML</h1>
+
+    <p>
+        This page is being served directly
+        from the ESP32 file server.
+    </p>
+
+    <div class="badge">
+        ESP32 ONLINE
+    </div>
+
+    <div class="bar">
+        <div class="fill"></div>
+    </div>
+
+    <div class="footer">
+        LittleFS / SD Web Hosting Demo
+    </div>
+
+</div>
+
+</body>
+</html>

@@ -4,6 +4,9 @@
 #include <LittleFS.h>
 #include <FS.h>
 
+#include <SPI.h>
+#include <SD.h>
+
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -29,94 +32,65 @@ Adafruit_SSD1306 display(
 );
 
 // ======================================================
-// OLED STATUS
+// SD STATUS
 // ======================================================
 
-String statusLine1 = "";
-String statusLine2 = "";
-
-String logLine1 = "";
-String logLine2 = "";
+bool sdMounted = false;
 
 // ======================================================
-// OLED RENDER
+// OLED LOG
 // ======================================================
 
-void renderOLED()
-{
-  display.clearDisplay();
-
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-
-  // ------------------------------
-  // STATUS FIXO
-  // ------------------------------
-
-  display.setCursor(0, 0);
-  display.println(statusLine1);
-
-  display.setCursor(0, 16);
-  display.println(statusLine2);
-
-  // ------------------------------
-  // LOG DINAMICO
-  // ------------------------------
-
-  display.setCursor(0, 32);
-  display.println(logLine1);
-
-  display.setCursor(0, 48);
-  display.println(logLine2);
-
-  display.display();
-}
-
-// ======================================================
-// STATUS
-// ======================================================
-
-void setStatus(
-  String line1,
-  String line2
-)
-{
-  statusLine1 = line1;
-  statusLine2 = line2;
-
-  renderOLED();
-}
-
-// ======================================================
-// LOG
-// ======================================================
-
-void oledLog(String msg)
-{
-  Serial.println(msg);
-
-  logLine1 = logLine2;
-  logLine2 = msg;
-
-  renderOLED();
-}
+String oledLogLine = "";
 
 // ======================================================
 // UTILS
 // ======================================================
 
-String formatBytes(size_t bytes)
+String formatBytes(uint64_t bytes)
 {
   if (bytes < 1024)
-    return String(bytes) + " B";
+  {
+    return String((uint32_t)bytes) + " B";
+  }
 
-  else if (bytes < (1024 * 1024))
-    return String(bytes / 1024.0) + " KB";
+  double kb = bytes / 1024.0;
 
-  else if (bytes < (1024 * 1024 * 1024))
-    return String(bytes / 1024.0 / 1024.0) + " MB";
+  if (kb < 1024)
+  {
+    return String(kb, 2) + " KB";
+  }
 
-  return String(bytes);
+  double mb = kb / 1024.0;
+
+  if (mb < 1024)
+  {
+    return String(mb, 2) + " MB";
+  }
+
+  double gb = mb / 1024.0;
+
+  if (gb < 1024)
+  {
+    return String(gb, 2) + " GB";
+  }
+
+  double tb = gb / 1024.0;
+
+  return String(tb, 2) + " TB";
+}
+
+String shortText(
+  String text,
+  int maxLen
+)
+{
+  if (text.length() <= maxLen)
+  {
+    return text;
+  }
+
+  return text.substring(0, maxLen - 3) + "...";
 }
 
 String getContentType(String filename)
@@ -135,36 +109,240 @@ String getContentType(String filename)
 }
 
 // ======================================================
+// OLED
+// ======================================================
+
+void renderOLED()
+{
+  display.clearDisplay();
+
+  display.setTextSize(1);
+
+  display.setTextColor(
+    SSD1306_WHITE
+  );
+
+  // ==================================================
+  // IP
+  // ==================================================
+
+  display.setCursor(0, 0);
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    display.println(
+      WiFi.localIP().toString()
+    );
+  }
+  else
+  {
+    display.println("NO WIFI");
+  }
+
+  // ==================================================
+  // LITTLEFS
+  // ==================================================
+
+  display.setCursor(0, 16);
+
+  display.print("FS ");
+
+  display.print(
+    formatBytes(
+      LittleFS.usedBytes()
+    )
+  );
+
+  display.print("/");
+
+  display.println(
+    formatBytes(
+      LittleFS.totalBytes()
+    )
+  );
+
+  // ==================================================
+  // SD
+  // ==================================================
+
+  display.setCursor(0, 32);
+
+  if (sdMounted)
+  {
+    uint64_t total =
+      SD.cardSize();
+
+    uint64_t used =
+      SD.usedBytes();
+
+    display.print("SD ");
+
+    display.print(
+      formatBytes(used)
+    );
+
+    display.print("/");
+
+    display.println(
+      formatBytes(total)
+    );
+  }
+  else
+  {
+    display.println("SD FAIL");
+  }
+
+  // ==================================================
+  // LOG
+  // ==================================================
+
+  display.setCursor(0, 48);
+
+  display.println(oledLogLine);
+
+  display.display();
+}
+
+void oledLog(String msg)
+{
+  Serial.println(msg);
+
+  oledLogLine = shortText(
+    msg,
+    20
+  );
+
+  renderOLED();
+}
+
+// ======================================================
+// FS HELPERS
+// ======================================================
+
+FS* getFS()
+{
+  if (
+    server.hasArg("fs") &&
+    server.arg("fs") == "sd"
+  )
+  {
+    return &SD;
+  }
+
+  return &LittleFS;
+}
+
+String getFSId(FS* fs)
+{
+  if (fs == &SD)
+  {
+    return "sd";
+  }
+
+  return "lfs";
+}
+
+// ======================================================
 // ROOT
 // ======================================================
 
 void handleRoot()
 {
-  handleFileList();
-}
-
-// ======================================================
-// FILE LIST
-// ======================================================
-
-void handleFileList()
-{
   String html;
 
   html += "<html><body>";
 
-  html += "<h2>ESP32 File Server</h2>";
+  html += "<h1>ESP32 FILE SERVER</h1>";
 
-  html += "<form method='POST' action='/upload' enctype='multipart/form-data'>";
-  html += "<input type='file' name='upload'>";
+  html += "<p>";
+  html += WiFi.localIP().toString();
+  html += "</p>";
+
+  // ==================================================
+  // LITTLEFS
+  // ==================================================
+
+  renderFileSection(
+    html,
+    LittleFS,
+    "LittleFS",
+    "lfs"
+  );
+
+  // ==================================================
+  // SD
+  // ==================================================
+
+  if (sdMounted)
+  {
+    renderFileSection(
+      html,
+      SD,
+      "SD CARD",
+      "sd"
+    );
+  }
+  else
+  {
+    html += "<hr>";
+    html += "<h2>SD CARD</h2>";
+    html += "<p>SD NOT MOUNTED</p>";
+  }
+
+  html += "</body></html>";
+
+  server.send(
+    200,
+    "text/html",
+    html
+  );
+}
+
+// ======================================================
+// FILE SECTION
+// ======================================================
+
+void renderFileSection(
+  String& html,
+  FS& fs,
+  String fsName,
+  String fsId
+)
+{
+  html += "<hr>";
+
+  // ==================================================
+  // TITLE
+  // ==================================================
+
+  html += "<h2>";
+  html += fsName;
+  html += "</h2>";
+
+  // ==================================================
+  // UPLOAD
+  // ==================================================
+
+  html += "<form method='POST' action='/upload?fs=";
+
+  html += fsId;
+
+  html += "' enctype='multipart/form-data'>";
+
+  html += "<input type='file' name='upload'> ";
+
   html += "<input type='submit' value='Upload'>";
+
   html += "</form>";
 
   html += "<br>";
-  html += "<a href='/format'>FORMAT FS</a>";
-  html += "<hr>";
 
-  File root = LittleFS.open("/");
+  // ==================================================
+  // FILE LIST
+  // ==================================================
+
+  File root = fs.open("/");
+
   File file = root.openNextFile();
 
   bool found = false;
@@ -174,25 +352,192 @@ void handleFileList()
     found = true;
 
     String path = file.path();
-    size_t size = file.size();
 
-    html += "<p>";
+    // ==============================================
+    // CARD
+    // ==============================================
+
+    html += "<div style='";
+
+    html += "border:1px solid #ccc;";
+    html += "padding:12px;";
+    html += "margin-bottom:12px;";
+    html += "border-radius:8px;";
+    html += "background:#f8f8f8;";
+
+    html += "'>";
+
+    // ==============================================
+    // FILE NAME
+    // ==============================================
+
+    html += "<div style='";
+
+    html += "font-weight:bold;";
+    html += "margin-bottom:6px;";
+    html += "word-break:break-all;";
+
+    html += "'>";
 
     html += path;
-    html += " (";
-    html += formatBytes(size);
-    html += ") ";
 
-    html += "<a href='/download?file=" + path + "'>DOWNLOAD</a> ";
+    html += "</div>";
 
-    html += "<a href='/rename?file=" + path + "'>RENAME</a> ";
+    // ==============================================
+    // FILE SIZE
+    // ==============================================
 
-    html += "<a href='/delete?file=" + path + "'>DELETE</a>";
+    html += "<div style='";
 
-    html += "</p>";
+    html += "font-size:14px;";
+    html += "color:#666;";
+    html += "margin-bottom:10px;";
+
+    html += "'>";
+
+    html += formatBytes(
+      file.size()
+    );
+
+    html += "</div>";
+
+    // ==============================================
+    // OPEN
+    // ==============================================
+
+    html += "<a target='_blank' ";
+
+    html += "style='";
+
+    html += "display:inline-block;";
+    html += "padding:6px 10px;";
+    html += "margin-right:6px;";
+    html += "margin-bottom:6px;";
+    html += "background:#2196F3;";
+    html += "color:white;";
+    html += "text-decoration:none;";
+    html += "border-radius:4px;";
+
+    html += "' href='/open?fs=";
+
+    html += fsId;
+
+    html += "&file=";
+
+    html += path;
+
+    html += "'>";
+
+    html += "OPEN";
+
+    html += "</a>";
+
+    // ==============================================
+    // DOWNLOAD
+    // ==============================================
+
+    html += "<a ";
+
+    html += "style='";
+
+    html += "display:inline-block;";
+    html += "padding:6px 10px;";
+    html += "margin-right:6px;";
+    html += "margin-bottom:6px;";
+    html += "background:#4CAF50;";
+    html += "color:white;";
+    html += "text-decoration:none;";
+    html += "border-radius:4px;";
+
+    html += "' href='/download?fs=";
+
+    html += fsId;
+
+    html += "&file=";
+
+    html += path;
+
+    html += "'>";
+
+    html += "DOWNLOAD";
+
+    html += "</a>";
+
+    // ==============================================
+    // RENAME
+    // ==============================================
+
+    html += "<a ";
+
+    html += "style='";
+
+    html += "display:inline-block;";
+    html += "padding:6px 10px;";
+    html += "margin-right:6px;";
+    html += "margin-bottom:6px;";
+    html += "background:#FF9800;";
+    html += "color:white;";
+    html += "text-decoration:none;";
+    html += "border-radius:4px;";
+
+    html += "' href='/rename?fs=";
+
+    html += fsId;
+
+    html += "&file=";
+
+    html += path;
+
+    html += "'>";
+
+    html += "RENAME";
+
+    html += "</a>";
+
+    // ==============================================
+    // DELETE
+    // ==============================================
+
+    html += "<a ";
+
+    html += "onclick='return confirm(\"Delete file?\")' ";
+
+    html += "style='";
+
+    html += "display:inline-block;";
+    html += "padding:6px 10px;";
+    html += "margin-bottom:6px;";
+    html += "background:#f44336;";
+    html += "color:white;";
+    html += "text-decoration:none;";
+    html += "border-radius:4px;";
+
+    html += "' href='/delete?fs=";
+
+    html += fsId;
+
+    html += "&file=";
+
+    html += path;
+
+    html += "'>";
+
+    html += "DELETE";
+
+    html += "</a>";
+
+    // ==============================================
+    // END CARD
+    // ==============================================
+
+    html += "</div>";
 
     file = root.openNextFile();
   }
+
+  // ==================================================
+  // EMPTY
+  // ==================================================
 
   if (!found)
   {
@@ -200,43 +545,103 @@ void handleFileList()
   }
 
   // ==================================================
-  // FOOTER
+  // STORAGE INFO
   // ==================================================
 
   html += "<hr>";
 
-  html += "<small>";
+  html += "<div style='";
+html += "display:flex;";
+html += "align-items:center;";
+html += "gap:8px;";
+html += "'>";
 
-  html += "IP: ";
-  html += WiFi.localIP().toString();
+// STORAGE TEXT
 
-  html += "<br>";
+html += "<small>";
 
-  html += "LittleFS Used: ";
-  html += formatBytes(LittleFS.usedBytes());
+if (fsId == "lfs")
+{
+  html += "Used: ";
+
+  html += formatBytes(
+    LittleFS.usedBytes()
+  );
 
   html += " / ";
 
-  html += formatBytes(LittleFS.totalBytes());
+  html += formatBytes(
+    LittleFS.totalBytes()
+  );
+}
+else
+{
+  uint64_t total =
+    SD.cardSize();
 
+  uint64_t used =
+    SD.usedBytes();
+
+  html += "Used: ";
+
+  html += formatBytes(used);
+
+  html += " / ";
+
+  html += formatBytes(total);
+}
+
+html += "</small>";
+
+// FORMAT BUTTON
+
+if (fsId == "lfs")
+{
+  html += "<a ";
+
+  html += "onclick='return confirm(\"Format filesystem?\")' ";
+
+  html += "style='";
+  html += "font-size:10px;";
+  html += "padding:2px 6px;";
+  html += "background:#f44336;";
+  html += "color:white;";
+  html += "text-decoration:none;";
+  html += "border-radius:4px;";
+  html += "' ";
+
+  html += "href='/format?fs=lfs'>";
+
+  html += "FORMAT";
+
+  html += "</a>";
+}
+else
+{
+  html += "<small style='font-size:10px;color:#888;'>";
+  html += "FORMAT DISABLED";
   html += "</small>";
+}
 
-  html += "</body></html>";
+html += "</div>";
 
-  server.send(200, "text/html", html);
 }
 
 // ======================================================
-// DOWNLOAD
+// OPEN
 // ======================================================
 
-void handleDownload()
+void handleOpen()
 {
+  FS* fs = getFS();
+
   if (!server.hasArg("file"))
   {
-    server.send(400, "text/plain", "BAD ARGS");
-
-    oledLog("DOWNLOAD FAIL");
+    server.send(
+      400,
+      "text/plain",
+      "BAD ARGS"
+    );
 
     return;
   }
@@ -244,25 +649,93 @@ void handleDownload()
   String path = server.arg("file");
 
   if (!path.startsWith("/"))
-    path = "/" + path;
-
-  if (!LittleFS.exists(path))
   {
-    server.send(404, "text/plain", "NOT FOUND");
+    path = "/" + path;
+  }
 
-    oledLog("FILE NOT FOUND");
+  if (!fs->exists(path))
+  {
+    server.send(
+      404,
+      "text/plain",
+      "NOT FOUND"
+    );
 
     return;
   }
 
-  oledLog("DOWNLOAD:");
-  oledLog(path);
+  oledLog(
+    "OPEN " + path
+  );
 
-  File file = LittleFS.open(path, "r");
+  File file = fs->open(
+    path,
+    "r"
+  );
+
+  server.streamFile(
+    file,
+    getContentType(path)
+  );
+
+  file.close();
+}
+
+
+// ======================================================
+// DOWNLOAD
+// ======================================================
+
+void handleDownload()
+{
+  FS* fs = getFS();
+
+  if (!server.hasArg("file"))
+  {
+    server.send(
+      400,
+      "text/plain",
+      "BAD ARGS"
+    );
+
+    oledLog("D FAIL");
+
+    return;
+  }
+
+  String path = server.arg("file");
+
+  if (!path.startsWith("/"))
+  {
+    path = "/" + path;
+  }
+
+  if (!fs->exists(path))
+  {
+    server.send(
+      404,
+      "text/plain",
+      "NOT FOUND"
+    );
+
+    oledLog("NOT FOUND");
+
+    return;
+  }
+
+  oledLog(
+    "D " + path
+  );
+
+  File file = fs->open(
+    path,
+    "r"
+  );
 
   server.sendHeader(
     "Content-Disposition",
-    "attachment; filename=" + path.substring(1)
+    "attachment; filename=" +
+    path.substring(1)
   );
 
   server.streamFile(
@@ -279,20 +752,28 @@ void handleDownload()
 
 void handleDelete()
 {
+  FS* fs = getFS();
+
   String path = server.arg("file");
 
   if (!path.startsWith("/"))
-    path = "/" + path;
-
-  if (LittleFS.exists(path))
   {
-    LittleFS.remove(path);
-
-    oledLog("DELETE:");
-    oledLog(path);
+    path = "/" + path;
   }
 
-  server.sendHeader("Location", "/files");
+  if (fs->exists(path))
+  {
+    fs->remove(path);
+
+    oledLog(
+      "DEL " + path
+    );
+  }
+
+  server.sendHeader(
+    "Location",
+    "/"
+  );
 
   server.send(303);
 }
@@ -303,11 +784,28 @@ void handleDelete()
 
 void handleFormat()
 {
-  oledLog("FORMAT FS");
+  if (
+    server.hasArg("fs") &&
+    server.arg("fs") == "sd"
+  )
+  {
+    server.send(
+      200,
+      "text/plain",
+      "SD FORMAT DISABLED"
+    );
+
+    return;
+  }
 
   LittleFS.format();
 
-  server.sendHeader("Location", "/files");
+  oledLog("FMT FS");
+
+  server.sendHeader(
+    "Location",
+    "/"
+  );
 
   server.send(303);
 }
@@ -318,10 +816,14 @@ void handleFormat()
 
 void handleRename()
 {
+  FS* fs = getFS();
+
   String file = server.arg("file");
 
   if (!file.startsWith("/"))
+  {
     file = "/" + file;
+  }
 
   if (!server.hasArg("new"))
   {
@@ -329,7 +831,13 @@ void handleRename()
 
     html += "<form action='/rename'>";
 
-    html += "<input type='hidden' name='file' value='" + file + "'>";
+    html += "<input type='hidden' name='fs' value='";
+    html += getFSId(fs);
+    html += "'>";
+
+    html += "<input type='hidden' name='file' value='";
+    html += file;
+    html += "'>";
 
     html += "<input name='new' placeholder='new name'>";
 
@@ -337,34 +845,50 @@ void handleRename()
 
     html += "</form>";
 
-    server.send(200, "text/html", html);
+    server.send(
+      200,
+      "text/html",
+      html
+    );
 
     return;
   }
 
-  String newName = server.arg("new");
+  String newName =
+    server.arg("new");
 
   if (!newName.startsWith("/"))
+  {
     newName = "/" + newName;
+  }
 
-  File oldF = LittleFS.open(file, "r");
-  File newF = LittleFS.open(newName, "w");
+  File oldF =
+    fs->open(file, "r");
+
+  File newF =
+    fs->open(newName, "w");
 
   while (oldF.available())
   {
-    newF.write(oldF.read());
+    newF.write(
+      oldF.read()
+    );
   }
 
   oldF.close();
+
   newF.close();
 
-  LittleFS.remove(file);
+  fs->remove(file);
 
-  oledLog("RENAME:");
-  oledLog(file);
-  oledLog(newName);
+  oledLog(
+    "REN " + newName
+  );
 
-  server.sendHeader("Location", "/files");
+  server.sendHeader(
+    "Location",
+    "/"
+  );
 
   server.send(303);
 }
@@ -377,25 +901,39 @@ File uploadFile;
 
 void handleUpload()
 {
-  HTTPUpload& upload = server.upload();
+  FS* fs = getFS();
 
-  if (upload.status == UPLOAD_FILE_START)
+  HTTPUpload& upload =
+    server.upload();
+
+  if (
+    upload.status ==
+    UPLOAD_FILE_START
+  )
   {
-    String filename = upload.filename;
+    String filename =
+      upload.filename;
 
     if (!filename.startsWith("/"))
-      filename = "/" + filename;
+    {
+      filename =
+        "/" + filename;
+    }
 
-    uploadFile = LittleFS.open(
+    uploadFile = fs->open(
       filename,
       FILE_WRITE
     );
 
-    oledLog("UPLOAD:");
-    oledLog(filename);
+    oledLog(
+      "U " + filename
+    );
   }
 
-  else if (upload.status == UPLOAD_FILE_WRITE)
+  else if (
+    upload.status ==
+    UPLOAD_FILE_WRITE
+  )
   {
     if (uploadFile)
     {
@@ -406,7 +944,10 @@ void handleUpload()
     }
   }
 
-  else if (upload.status == UPLOAD_FILE_END)
+  else if (
+    upload.status ==
+    UPLOAD_FILE_END
+  )
   {
     if (uploadFile)
     {
@@ -415,34 +956,7 @@ void handleUpload()
 
     oledLog("UPLOAD OK");
 
-    server.sendHeader(
-      "Location",
-      "/upload_done"
-    );
-
-    server.send(303);
   }
-}
-
-// ======================================================
-// UPLOAD DONE
-// ======================================================
-
-void handleUploadDone()
-{
-  String html;
-
-  html += "<html><body>";
-
-  html += "<h2>Upload concluido</h2>";
-
-  html += "<a href='/files'>File Manager</a><br>";
-
-  html += "<a href='/'>Home</a>";
-
-  html += "</body></html>";
-
-  server.send(200, "text/html", html);
 }
 
 // ======================================================
@@ -453,9 +967,15 @@ void handleNotFound()
 {
   String path = server.uri();
 
+  // LITTLEFS
+
   if (LittleFS.exists(path))
   {
-    File file = LittleFS.open(path, "r");
+    File file =
+      LittleFS.open(
+        path,
+        "r"
+      );
 
     server.streamFile(
       file,
@@ -467,13 +987,35 @@ void handleNotFound()
     return;
   }
 
-  Serial.println("404: " + path);
+  // SD
 
-  server.send(
-    404,
-    "text/plain",
-    "404 NOT FOUND"
+  if (
+    sdMounted &&
+    SD.exists(path)
+  )
+  {
+    File file =
+      SD.open(
+        path,
+        "r"
+      );
+
+    server.streamFile(
+      file,
+      getContentType(path)
+    );
+
+    file.close();
+
+    return;
+  }
+
+   server.sendHeader(
+    "Location",
+    "/"
   );
+
+  server.send(303);
 }
 
 // ======================================================
@@ -482,44 +1024,60 @@ void handleNotFound()
 
 void startFileServer()
 {
-  server.on("/", handleRoot);
-
-  server.on("/files", handleFileList);
-
-  server.on("/download", handleDownload);
-
-  server.on("/delete", handleDelete);
-
-  server.on("/rename", handleRename);
-
-  server.on("/format", handleFormat);
-
   server.on(
-    "/upload",
-    HTTP_POST,
-    []() {},
-    handleUpload
+    "/",
+    handleRoot
   );
 
   server.on(
-    "/upload_done",
-    handleUploadDone
+    "/download",
+    handleDownload
   );
 
-  server.onNotFound(handleNotFound);
+  server.on(
+    "/delete",
+    handleDelete
+  );
+
+  server.on(
+    "/rename",
+    handleRename
+  );
+
+  server.on(
+    "/format",
+    handleFormat
+  );
+
+  server.on(
+  "/open",
+  handleOpen
+);
+
+  server.on(
+  "/upload",
+  HTTP_POST,
+
+  []()
+  {
+    server.sendHeader(
+      "Location",
+      "/"
+    );
+
+    server.send(303);
+  },
+
+  handleUpload
+);
+
+  server.onNotFound(
+    handleNotFound
+  );
 
   server.begin();
 
-  setStatus(
-  WiFi.localIP().toString(),
-  "FS: " +
-  formatBytes(LittleFS.usedBytes()) +
-  "/" +
-  formatBytes(LittleFS.totalBytes())
-);
-
-  oledLog("SERVER START");
-  oledLog("");
+  oledLog("SERVER OK");
 }
 
 // ======================================================
@@ -553,13 +1111,15 @@ void initOLED()
 
   display.setCursor(0, 0);
 
-  display.println("ESP32 FILE SERVER");
+  display.println(
+    "ESP32 FILE SERVER"
+  );
 
   display.display();
 
   delay(1000);
 
-  oledLog("OLED READY");
+  oledLog("OLED OK");
 }
 
 // ======================================================
@@ -572,22 +1132,60 @@ void setup()
 
   initOLED();
 
-  oledLog("MOUNT FS");
+  // ==================================================
+  // LITTLEFS
+  // ==================================================
+
+  oledLog("MOUNT LFS");
 
   if (!LittleFS.begin(true))
   {
-    oledLog("FS FAIL");
+    oledLog("LFS FAIL");
 
     return;
   }
 
-  oledLog("FS OK");
+  oledLog("LFS OK");
 
-  oledLog("WIFI START");
+  // ==================================================
+  // SD
+  // ==================================================
+
+  SPI.begin(
+    SD_SCK,
+    SD_MISO,
+    SD_MOSI,
+    SD_CS
+  );
+
+  oledLog("MOUNT SD");
+
+  sdMounted = SD.begin(
+    SD_CS
+  );
+
+  if (sdMounted)
+  {
+    oledLog("SD OK");
+  }
+  else
+  {
+    oledLog("SD FAIL");
+  }
+
+  // ==================================================
+  // WIFI
+  // ==================================================
+
+  oledLog("WIFI");
 
   WiFiConfig::begin();
 
   oledLog("WIFI OK");
+
+  // ==================================================
+  // SERVER
+  // ==================================================
 
   startFileServer();
 }
