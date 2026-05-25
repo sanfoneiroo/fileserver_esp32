@@ -233,19 +233,6 @@ O projeto busca priorizar:
 
 ---
 
-# Possíveis Melhorias Futuras
-
-- suporte completo a subdiretórios
-- upload drag-and-drop
-- CSS embarcado
-- autenticação
-- preview de arquivos
-- geração HTML por streaming
-- servidor assíncrono
-- download ZIP
-
----
-
 # Licença
 
 MIT
